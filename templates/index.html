@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>🔍 Website Security Scanner</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(to right, #141e30, #243b55);
+      color: #fff;
+      text-align: center;
+    }
+
+    h1 {
+      margin-top: 40px;
+      font-size: 2.8rem;
+      color: #00ffe7;
+    }
+
+    form {
+      margin: 30px auto;
+      max-width: 500px;
+      padding: 20px;
+      background: #1f2937;
+      border-radius: 12px;
+      box-shadow: 0 0 20px rgba(0,255,255,0.2);
+    }
+
+    input[type="text"] {
+      width: 80%;
+      padding: 12px;
+      font-size: 1rem;
+      border: none;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+
+    button {
+      padding: 12px 24px;
+      font-size: 1.1rem;
+      background-color: #00ffe7;
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.3s;
+      margin: 10px;
+    }
+
+    button:hover {
+      background-color: #00bfa5;
+    }
+
+    #loading {
+      display: none;
+      font-style: italic;
+      margin-top: 20px;
+    }
+
+    #report {
+      white-space: pre-wrap;
+      background: #121212;
+      color: #0ff;
+      margin: 40px auto;
+      padding: 20px;
+      border-radius: 12px;
+      max-width: 90%;
+      font-family: 'Courier New', monospace;
+      box-shadow: 0 0 12px #00ffe7;
+      text-align: left;
+    }
+
+    .spinner {
+      margin: 20px auto;
+      width: 50px;
+      height: 50px;
+      border: 6px solid #00ffe7;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      display: none;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    footer {
+      margin-top: 50px;
+      font-size: 0.9rem;
+      color: #ccc;
+    }
+
+    #downloadBtn {
+      display: none;
+    }
+
+    /* Chatbot Styles */
+    #chat-toggle {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: #00ffe7;
+      color: #000;
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      text-align: center;
+      font-size: 24px;
+      cursor: pointer;
+      z-index: 9999;
+    }
+
+    #chatbot-frame {
+      position: fixed;
+      bottom: 80px;
+      right: 20px;
+      display: none;
+      z-index: 9998;
+      border: none;
+      border-radius: 10px;
+      box-shadow: 0 0 12px #00ffe7;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🔐 Website Security Scanner</h1>
+
+  <form id="scanForm">
+    <input type="text" id="urlInput" placeholder="Enter website URL (e.g. https://example.com)" required>
+    <br>
+    <button type="submit">Scan Website</button>
+    <button type="button" id="downloadBtn">Download PDF</button>
+  </form>
+
+  <div class="spinner" id="spinner"></div>
+  <p id="loading">Scanning... Please wait.</p>
+
+  <div id="report"></div>
+
+  <footer>Made By Vaibhav</footer>
+
+  <!-- Chatbot Button and iFrame -->
+  <div id="chat-toggle" onclick="toggleChat()">💬</div>
+  <div id="chatbot-frame">
+    <iframe
+      allow="microphone;"
+      width="350"
+      height="430"
+       src="https://console.dialogflow.com/api-client/demo/embedded/65a0072a-58fa-4ad7-957f-5a4a4003f221">
+    </iframe>
+  </div>
+
+  <script>
+    const reportDiv = document.getElementById('report');
+    const downloadBtn = document.getElementById('downloadBtn');
+
+    document.getElementById('scanForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+      const url = document.getElementById('urlInput').value;
+      const spinner = document.getElementById('spinner');
+      const loadingText = document.getElementById('loading');
+      downloadBtn.style.display = 'none';
+
+      reportDiv.innerText = '';
+      spinner.style.display = 'block';
+      loadingText.style.display = 'block';
+
+      fetch('/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      })
+        .then(response => response.text())
+        .then(data => {
+          spinner.style.display = 'none';
+          loadingText.style.display = 'none';
+          reportDiv.innerText = data;
+          downloadBtn.style.display = 'inline-block';
+        })
+        .catch(error => {
+          spinner.style.display = 'none';
+          loadingText.innerText = 'Something went wrong.';
+          console.error('Error:', error);
+        });
+    });
+
+    // PDF download logic
+    document.getElementById('downloadBtn').addEventListener('click', () => {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      const lines = reportDiv.innerText.split('\n');
+      let y = 10;
+
+      doc.setFont('Courier', 'normal');
+      doc.setFontSize(10);
+
+      for (let line of lines) {
+        if (y > 280) {
+          doc.addPage();
+          y = 10;
+        }
+        doc.text(line, 10, y);
+        y += 7;
+      }
+
+      doc.save('Website_Security_Report.pdf');
+    });
+
+    // Toggle Chatbot Popup
+    function toggleChat() {
+      const bot = document.getElementById('chatbot-frame');
+      bot.style.display = bot.style.display === 'block' ? 'none' : 'block';
+    }
+  </script>
+
+</body>
+</html>
+
