@@ -1,68 +1,66 @@
 from flask import Flask, request, render_template
-import subprocess
-import re
-import os
-from flask import Flask, request, render_template
-import requests
-import subprocess
-import re
-import os
-import requests
-import ssl, socket
-from datetime import datetime
+import subprocess as sp
+import re, os, ssl, socket, requests
+from datetime import datetime as dt
+from flask import Flask, render_template
 
 app = Flask(__name__)
 
-def run_command(command, timeout=20):
-    try:
-        return subprocess.check_output(command, shell=True, timeout=timeout, stderr=subprocess.STDOUT).decode()
-    except subprocess.TimeoutExpired:
-        return f"⏱️ Command timed out: {command}\n"
-    except subprocess.CalledProcessError as e:
-        return f" Error: {e.output.decode()}\n"
-    except Exception as ex:
-        return f" Unexpected error: {str(ex)}\n"
+@app.route('/')
+def home():
+    return render_template('index.html')
 
-def get_tech_stack_with_builtwith(domain):
-    api_key = "19954cde-cbc6-49d5-ba23-a77339c067b9"  # Your API key
+
+app = Flask(__name__)
+
+def do_cmd(cmd, timeout=15):
     try:
-        response = requests.get(f"https://api.builtwith.com/free1/api.json?KEY={api_key}&LOOKUP={domain}")
-        if response.status_code == 200:
-            data = response.json()
-            if "Results" in data and data["Results"]:
-                techs = []
-                for tech in data["Results"][0].get("Result", []):
-                    techs.append(tech.get("Name"))
-                return ', '.join(techs) if techs else " No technologies found."
-            return " No technologies found."
-        else:
-            return f" API error ({response.status_code})"
+        out = sp.check_output(cmd, shell=True, timeout=timeout, stderr=sp.STDOUT)
+        return out.decode('utf-8')
+    except sp.TimeoutExpired:
+        return f"timeout on: {cmd}\n"
+    except sp.CalledProcessError as ce:
+        return f"fail: {ce.output.decode()}\n"
     except Exception as e:
-        return f" Error: {str(e)}"
+        return f"err: {str(e)}\n"
 
-
-def check_ssl_cert(domain):
+def fetch_tech(domain):
+    k = "19954cde-cbc6-49d5-ba23-a77339c067b9"
     try:
-        context = ssl.create_default_context()
-        with socket.create_connection((domain, 443), timeout=5) as sock:
-            with context.wrap_socket(sock, server_hostname=domain) as ssock:
-                cert = ssock.getpeercert()
-                expires = datetime.strptime(cert['notAfter'], "%b %d %H:%M:%S %Y %Z")
-                days_left = (expires - datetime.utcnow()).days
-                return f" Valid SSL Certificate (expires in {days_left} days)"
+        r = requests.get(f"https://api.builtwith.com/free1/api.json?KEY={k}&LOOKUP={domain}")
+        if r.status_code == 200:
+            j = r.json()
+            res = j.get("Results", [])
+            if res:
+                ts = [i.get("Name") for i in res[0].get("Result", []) if i.get("Name")]
+                return ', '.join(ts) if ts else "none"
+            return "none"
+        return f"api err {r.status_code}"
     except Exception as e:
-        return f"❌ Not Found"
+        return f"err: {e}"
 
-def rate_website(tech_string):
+def check_ssl(host):
+    try:
+        c = ssl.create_default_context()
+        with socket.create_connection((host, 443), timeout=5) as s:
+            with c.wrap_socket(s, server_hostname=host) as ss:
+                cert = ss.getpeercert()
+                end = dt.strptime(cert['notAfter'], "%b %d %H:%M:%S %Y %Z")
+                left = (end - dt.utcnow()).days
+                return f"valid ({left}d)"
+    except:
+        return "bad"
+
+def rate(t):
     score = 8
-    lower = tech_string.lower()
-    if "outdated" in lower or "vulnerable" in lower:
+    t = t.lower()
+    if "outdated" in t or "vulnerable" in t:
         score -= 3
-    if "unknown" in lower or "no server" in lower:
+    if "unknown" in t or "no server" in t:
         score -= 2
-    if "wordpress" in lower:
+    if "wordpress" in t:
         score -= 1
-    if "apache" in lower or "nginx" in lower:
+    if "apache" in t or "nginx" in t:
         score += 1
     return max(1, min(score, 10))
 
@@ -71,220 +69,81 @@ def home():
     return render_template('index.html')
 
 @app.route('/scan', methods=['POST'])
-def scan():
-    data = request.get_json()
-    url = data.get('url')
-
+def scanner():
+    info = request.get_json()
+    url = info.get('url')
     if not url:
-        return " Please enter a valid website."
+        return "bad input"
 
-    clean_url = url.replace('https://', '').replace('http://', '').split('/')[0]
-    http_url = "http://" + clean_url
-    https_url = "https://" + clean_url
+    url = url.replace("http://", "").replace("https://", "").split("/")[0]
+    hurl = "http://" + url
+    surl = "https://" + url
 
-    report = f" Website Security Report for: `{clean_url}`\n"
-    report += "-" * 60 + "\n\n"
+    rep = f"Scan: {url}\n" + ("-"*55) + "\n\n"
 
-    whois_data = run_command(f"whois {clean_url}", timeout=10)
-    owner = "Not available"
-    country = "Unknown"
-    for line in whois_data.splitlines():
-        line_lower = line.lower()
-        if any(key in line_lower for key in ["registrant name", "registrant organization", "orgname", "organization"]):
-            owner = line.strip()
-        if "country:" in line_lower and country == "Unknown":
-            match = re.search(r"country:\s*(\w+)", line_lower)
-            if match:
-                country = match.group(1).upper()
+    who = do_cmd(f"whois {url}", timeout=10)
+    name = "n/a"
+    ctry = "n/a"
+    for l in who.splitlines():
+        l = l.lower()
+        if any(tag in l for tag in ["registrant name", "registrant organization", "orgname", "organization"]):
+            name = l.strip()
+        if "country:" in l and ctry == "n/a":
+            found = re.search(r"country:\s*(\w+)", l)
+            if found:
+                ctry = found.group(1).upper()
 
-    report += f" Website Owner: {owner}\n"
-    report += f" Hosting Country: {country}\n\n"
+    rep += f"Owner: {name}\n"
+    rep += f"Country: {ctry}\n\n"
 
-    # Technology Stack (via BuiltWith)
-    tech_summary = get_tech_stack_with_builtwith(clean_url)
-    report += f"🔧 Technology Stack: {tech_summary}\n"
+    tech = fetch_tech(url)
+    rep += f"Stack: {tech}\n"
 
-    
-    score = rate_website(tech_summary)
-    level = " Safe" if score >= 8 else " Moderate" if score >= 5 else "Risky"
-    report += f" Security Rating: {score}/10 → {level}\n"
+    scr = rate(tech)
+    lvl = "OK" if scr >= 8 else ("Warn" if scr >= 5 else "Fail")
+    rep += f"Rating: {scr}/10 [{lvl}]\n"
 
+    cert = check_ssl(url)
+    rep += f"SSL: {cert}\n"
 
-    ssl_status = check_ssl_cert(clean_url)
-    report += f" SSL Certificate: {ssl_status}\n"
+    heads = do_cmd(f"curl -I {surl}", timeout=10)
+    missing = []
+    if "X-Content-Type-Options" not in heads:
+        missing.append("X-Content-Type-Options")
+    if "Strict-Transport-Security" not in heads:
+        missing.append("Strict-Transport-Security")
 
- 
-    headers = run_command(f"curl -I {https_url}", timeout=10)
-    missing_headers = []
-    if "X-Content-Type-Options" not in headers:
-        missing_headers.append("X-Content-Type-Options")
-    if "Strict-Transport-Security" not in headers:
-        missing_headers.append("Strict-Transport-Security")
-    if missing_headers:
-        report += f" HTTP Security Headers:  Missing: {', '.join(missing_headers)}\n"
-        report += " Suggestion: Add the following headers to your server configuration:\n"
-        if "X-Content-Type-Options" in missing_headers:
-            report += "   - X-Content-Type-Options: nosniff\n"
-        if "Strict-Transport-Security" in missing_headers:
-            report += "   - Strict-Transport-Security: max-age=31536000; includeSubDomains\n"
+    if missing:
+        rep += f"Missing Headers: {', '.join(missing)}\n"
+        for m in missing:
+            if m == "X-Content-Type-Options":
+                rep += "  - Add: nosniff\n"
+            elif m == "Strict-Transport-Security":
+                rep += "  - Add: max-age=31536000; includeSubDomains\n"
     else:
-        report += " HTTP Security Headers:  Present\n"
+        rep += "Headers OK\n"
 
-    # WAF Detection
-    waf = run_command(f"wafw00f {http_url}", timeout=15)
-    report += f" Firewall (WAF): {' Detected' if 'is behind' in waf else ' Not detected (may be hidden behind CDN or blocked)'}\n"
+    waf = do_cmd(f"wafw00f {hurl}", timeout=15)
+    rep += f"WAF: {'yes' if 'is behind' in waf else 'no'}\n"
 
-    # Open Ports
-    nmap_data = run_command(f"nmap --top-ports 100 {clean_url}", timeout=20)
-    open_ports = [line for line in nmap_data.splitlines() if "/tcp" in line and "open" in line]
-    report += f"📡 Open Ports Detected: {len(open_ports)} port(s)\n"
-    if len(open_ports) == 0:
-        report += " Note: Some websites block scans or only allow HTTPS on port 443.\n"
+    scan_ports = do_cmd(f"nmap --top-ports 100 {url}", timeout=20)
+    open_p = [x for x in scan_ports.splitlines() if "/tcp" in x and "open" in x]
+    rep += f"Ports: {len(open_p)}\n"
+    if not open_p:
+        rep += "Note: ports closed or filtered\n"
 
-    # Summary
-    report += "\n Summary:\n"
-    if score >= 8:
-        report += " This website appears to be generally **safe**.\n"
-    elif score >= 5:
-        report += " This website may have **moderate** security concerns.\n"
+    rep += "\n-- Summary --\n"
+    if scr >= 8:
+        rep += "✓ Site looks OK\n"
+    elif scr >= 5:
+        rep += "~ Site has issues\n"
     else:
-        report += " This website may be **risky**. Avoid sensitive interactions.\n"
+        rep += "✗ Site not secure\n"
 
-    report += "\n Note: This is a public scan using open-source tools. Always verify results with professional security testing."
-
-    return report
-
+    rep += "\n* This is a basic check. Confirm wwsl"
+    "ith proper tools."
+    return rep
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
-
-
-app = Flask(__name__)
-
-# BuiltWith Tech Stack Detection
-def get_tech_stack_with_builtwith(target_url):
-    api_key = "19954cde-cbc6-49d5-ba23-a77339c067b9" 
-
-    try:
-        response = requests.get(
-            f"https://api.builtwith.com/v20/api.json?KEY={api_key}&LOOKUP={target_url}"
-        )
-        data = response.json()
-
-        techs = []
-        for result in data.get("Results", []):
-            for tech in result.get("Result", {}).get("Paths", {}).get("*", []):
-                techs.append(tech.get("Technology", {}).get("Name"))
-
-        if not techs:
-            return " No technologies found."
-        return "🕵️ " + ", ".join(sorted(set(techs)))
-
-    except Exception as e:
-        return f"BuiltWith API Error: {e}"
-
-# Command Runner
-def run_command(command, timeout=20):
-    try:
-        return subprocess.check_output(command, shell=True, timeout=timeout, stderr=subprocess.STDOUT).decode()
-    except subprocess.TimeoutExpired:
-        return f"⏱️ Command timed out: {command}\n"
-    except subprocess.CalledProcessError as e:
-        return f" Error: {e.output.decode()}\n"
-    except Exception as ex:
-        return f" Unexpected error: {str(ex)}\n"
-
-@app.route('/')
-def home():
-    return render_template('index.html')
-
-@app.route('/scan', methods=['POST'])
-def scan():
-    data = request.get_json()
-    url = data.get('url')
-
-    if not url:
-        return "Please enter a valid website."
-
-    clean_url = url.replace('https://', '').replace('http://', '').split('/')[0]
-    http_url = "http://" + clean_url
-    https_url = "https://" + clean_url
-
-    report = f" Website Security Report for: `{clean_url}`\n"
-    report += "-" * 60 + "\n\n"
-
-    # WHOIS Info
-    whois_data = run_command(f"whois {clean_url}", timeout=10)
-    owner = "Not available"
-    country = "Unknown"
-
-    for line in whois_data.splitlines():
-        line_lower = line.lower()
-        if any(key in line_lower for key in ["registrant name", "registrant organization", "orgname", "organization"]):
-            owner = line.strip()
-        if "country:" in line_lower and country == "Unknown":
-            match = re.search(r"country:\s*(\w+)", line_lower)
-            if match:
-                country = match.group(1).upper()
-
-    report += f" Website Owner: {owner}\n"
-    report += f" Hosting Country: {country}\n\n"
-
-    tech_summary = get_tech_stack_with_builtwith(http_url)
-    report += f"🔧 Technology Stack: {tech_summary}\n"
-
-   
-    score = 8
-    level = " Safe" if score >= 8 else " Moderate" if score >= 5 else " Risky"
-    report += f" Security Rating: {score}/10 → {level}\n"
-
-    sslscan_data = run_command(f"sslscan {clean_url}", timeout=15)
-    ssl_status = "Valid SSL Certificate" if "SSL" in sslscan_data or "TLS" in sslscan_data else " Not Found"
-    report += f" SSL Certificate: {ssl_status}\n"
-
-    headers = run_command(f"curl -I {https_url}", timeout=10)
-    missing_headers = []
-    if "X-Content-Type-Options" not in headers:
-        missing_headers.append("X-Content-Type-Options")
-    if "Strict-Transport-Security" not in headers:
-        missing_headers.append("Strict-Transport-Security")
-    
-    if not missing_headers:
-        report += " HTTP Security Headers:  Present\n"
-    else:
-        report += f" HTTP Security Headers: Missing: {', '.join(missing_headers)}\n"
-        report += " Suggestion: Add the following headers to your server configuration:\n"
-        for h in missing_headers:
-            if h == "X-Content-Type-Options":
-                report += "   - X-Content-Type-Options: nosniff\n"
-            if h == "Strict-Transport-Security":
-                report += "   - Strict-Transport-Security: max-age=31536000; includeSubDomains\n"
-
-    waf = run_command(f"wafw00f {http_url}", timeout=15)
-    report += f" Firewall (WAF): {' Detected' if 'is behind' in waf else 'Not detected (may be hidden behind CDN or blocked)'}\n"
-
-    # 📡 Open Ports
-    nmap_data = run_command(f"nmap --top-ports 100 {clean_url}", timeout=20)
-    open_ports = [line for line in nmap_data.splitlines() if "/tcp" in line and "open" in line]
-    report += f"📡 Open Ports Detected: {len(open_ports)} port(s)\n"
-    if len(open_ports) == 0:
-        report += " Note: Some websites block scans or only allow HTTPS on port 443.\n"
-
-    # 📊 Summary
-    report += "\n📊 Summary:\n"
-    if score >= 8:
-        report += " This website appears to be generally **safe**.\n"
-    elif score >= 5:
-        report += " This website may have **moderate** security concerns.\n"
-    else:
-        report += "This website may be **risky**. Avoid sensitive interactions.\n"
-
-    report += "\n Note: This is a public scan using open-source tools. Always verify results with professional security testing."
-
-    return report
-
-# Run on Render or localhost
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    p = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=p)
